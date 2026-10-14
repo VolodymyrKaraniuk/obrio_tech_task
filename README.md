@@ -80,6 +80,7 @@ JSON через LLM, рахує детерміновані статус, риз�
 - **`request_report`** і workflow *Access requests: report* (вручну або щодня о 09:00): усього заявок,
   повні, неповні, ризикові (з них високий ризик), прийняті/відхилені/без рішення, не-заявки,
   розподіл за маршрутами і причинами ризику.
+- **Slack:** https://join.slack.com/t/obriotechtask/shared_invite/zt-4cqq6mka9-as7uuF8fmxl_MT_0Diu3EA → посилання на канал
 
 ## Приклади
 
@@ -103,15 +104,12 @@ JSON через LLM, рахує детерміновані статус, риз�
 
 ## Запуск
 
-1. `cp .env.example .env` і заповнити: секрети (`openssl rand -hex 32`), `NGROK_*` для Slack Trigger,
-   за бажанням `ANTHROPIC_API_KEY`, `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` (тоді credentials створяться самі).
+1. `cp .env.example .env` 
 2. Одна команда:
    ```bash
    docker compose up -d
    ```
 3. Відкрити http://localhost:5678 і створити акаунт власника n8n.
-4. У Slack App (налаштування — [slack-app-manifest.json](slack-app-manifest.json)) вказати Request URL
-   з вузла *Slack Trigger* → *Webhook URLs* → *Production URL*.
 
 Що відбувається під час `up` (кожного разу, ідемпотентно):
 
