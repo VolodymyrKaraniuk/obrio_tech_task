@@ -1,0 +1,148 @@
+name: n8n
+
+# Settings shared by n8n and the one-shot n8n-setup service.
+x-n8n-env: &n8n-env
+  DB_TYPE: postgresdb
+  DB_POSTGRESDB_HOST: postgres
+  DB_POSTGRESDB_DATABASE: n8n
+  DB_POSTGRESDB_USER: n8n
+  DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+  N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY}
+  N8N_HOST: localhost
+  N8N_PORT: "5678"
+  N8N_PROTOCOL: http
+  # Public base URL for webhooks (Slack events): the ngrok domain, or localhost if not set.
+  N8N_WEBHOOK_URL: ${NGROK_DOMAIN:+https://${NGROK_DOMAIN}/}
+  # Requests arrive through ngrok, which adds X-Forwarded-For.
+  N8N_PROXY_HOPS: "1"
+  GENERIC_TIMEZONE: Europe/Kyiv
+  TZ: Europe/Kyiv
+  N8N_DIAGNOSTICS_ENABLED: "false"
+  EXECUTIONS_DATA_PRUNE: "true"
+  EXECUTIONS_DATA_MAX_AGE: "168"
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    environment:
+      POSTGRES_DB: n8n
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n -d n8n"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Creates the "app" role/database if missing and applies db/schema.sql. Runs on every `up`, then exits.
+  db-init:
+    image: postgres:16.10-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: n8n
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
+    volumes:
+      - ./db:/db:ro
+      - ./docker/db-init.sh:/db-init.sh:ro
+    entrypoint: ["sh", "/db-init.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Creates missing credentials from .env and imports workflows that are not in n8n yet.
+  # Never overwrites existing ones, so edits made in the n8n UI are kept. Runs before n8n, then exits.
+  n8n-setup:
+    image: n8nio/n8n:2.42.6
+    environment:
+      <<: *n8n-env
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/workflows:ro
+      - ./docker/n8n-setup.js:/n8n-setup.js:ro
+    entrypoint: ["node", "/n8n-setup.js"]
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  n8n:
+    image: n8nio/n8n:2.42.6
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment: *n8n-env
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      n8n-setup:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ngrok tunnel with a permanent (static) domain: Slack Event Subscriptions -> n8n webhooks.
+  # Needs NGROK_AUTHTOKEN and NGROK_DOMAIN in .env (dashboard.ngrok.com); idles if they are empty.
+  tunnel:
+    image: ngrok/ngrok:3.39.11-alpine
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+      NGROK_DOMAIN: ${NGROK_DOMAIN:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$$NGROK_AUTHTOKEN" ] || [ -z "$$NGROK_DOMAIN" ]; then
+          echo "ngrok is not configured (NGROK_AUTHTOKEN / NGROK_DOMAIN): Slack Trigger will not receive events"
+          exec sleep infinity
+        fi
+        exec ngrok http n8n:5678 --url "https://$$NGROK_DOMAIN" --log stdout
+    depends_on:
+      - n8n
+    restart: unless-stopped
+
+  # Web UI for the databases: http://localhost:8081 (only from this machine).
+  # Login: System PostgreSQL, Server postgres, Username/Password from .env, Database app.
+  adminer:
+    image: adminer:6.1.0
+    ports:
+      - "127.0.0.1:8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  # Daily pg_dump of both databases into ./backups, keeping the last 14 days:
+  #   n8n-<date>.sql.gz - n8n itself (workflows, credentials, executions)
+  #   app-<date>.sql.gz - access requests, decisions, non-requests
+  backup:
+    image: postgres:16.10-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: n8n
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      TZ: Europe/Kyiv
+    volumes:
+      - ./backups:/backups
+    entrypoint: >
+      sh -c 'while true; do
+        for db in n8n app; do
+          f=/backups/$$db-$$(date +%Y%m%d-%H%M%S).sql.gz;
+          pg_dump -d $$db -Z gzip -f "$$f" && echo "backup ok: $$f" || { echo "backup FAILED: $$db"; rm -f "$$f"; };
+        done;
+        find /backups -name "*.sql.gz" -mtime +14 -delete;
+        sleep 86400;
+      done'
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  n8n_data:

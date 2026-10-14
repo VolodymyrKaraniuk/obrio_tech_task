@@ -1,0 +1,37 @@
+{
+  "display_information": {
+    "name": "n8n-bot",
+    "description": "Reads channel messages for n8n and asks clarifying questions"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "n8n-bot",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "channels:history",
+        "channels:read",
+        "groups:history",
+        "groups:read",
+        "chat:write",
+        "users:read",
+        "users:read.email"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://raffle-laurel-kilowatt.ngrok-free.dev/webhook/f214ea03-7a4b-4aaf-9f80-74574477af57/webhook",
+      "bot_events": [
+        "message.channels",
+        "message.groups"
+      ]
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

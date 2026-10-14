@@ -1,0 +1,144 @@
+{
+  "id": "AccessReqReport1",
+  "name": "Access requests: report",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "5621aa6d-ccca-5364-a289-e76bf1167e26",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "b3e853c1-1d23-50f2-9142-0111eb9ad8e3",
+      "name": "Every day 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM request_report;",
+        "options": {}
+      },
+      "id": "0917f29d-58e6-5eb0-ba4b-cecbf4767591",
+      "name": "Report counters",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ZJgIPopJgGjKkCiD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT reason, count(*)::int AS count\nFROM access_requests, jsonb_array_elements_text(risk_reasons) AS reason\nGROUP BY reason ORDER BY count DESC;",
+        "options": {}
+      },
+      "id": "3afde0f5-b251-57f1-8a5b-f237cbc8a47f",
+      "name": "Top risk reasons",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "ZJgIPopJgGjKkCiD",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format the counters from the request_report view (+ top risk reasons) as a text report.\nconst r = $('Report counters').first().json;\nconst reasons = $('Top risk reasons').all().map((i) => i.json).filter((x) => x.reason);\n\nconst lines = [\n  `*Звіт по заявках на доступ* (${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC)`,\n  '',\n  `Всього заявок: ${r.total_requests}`,\n  `• повні: ${r.complete}`,\n  `• неповні: ${r.incomplete}`,\n  `• ризикові: ${r.risky} (з них високий ризик: ${r.risk_high})`,\n  `Рішення: прийнято ${r.accepted}, відхилено ${r.rejected}, без рішення ${r.pending_decision}`,\n  `Не-заявки: ${r.non_requests}`,\n  '',\n  '*Маршрути*',\n  `• звичайний апрув: ${r.route_standard_approval}`,\n  `• ручна перевірка DevOps: ${r.route_devops_review}`,\n  `• чекають уточнення: ${r.route_needs_clarification}`,\n];\nif (reasons.length) {\n  lines.push('', '*Причини ризику*');\n  for (const x of reasons) lines.push(`• ${x.reason}: ${x.count}`);\n}\n\nreturn [{ json: { ...r, risk_reasons: reasons, text: lines.join('\\n') } }];\n"
+      },
+      "id": "50aa42c2-7ede-5021-8d8f-405a87afe980",
+      "name": "Format report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Run manually": {
+      "main": [
+        [
+          {
+            "node": "Report counters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every day 09:00": {
+      "main": [
+        [
+          {
+            "node": "Report counters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report counters": {
+      "main": [
+        [
+          {
+            "node": "Top risk reasons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Top risk reasons": {
+      "main": [
+        [
+          {
+            "node": "Format report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
